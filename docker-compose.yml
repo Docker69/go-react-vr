@@ -1,0 +1,199 @@
+version: '3.9'
+
+x-kong-config: &kong-env
+  KONG_DATABASE: ${KONG_DATABASE:-off}
+  KONG_PG_DATABASE: ${KONG_PG_DATABASE:-kong}
+  KONG_PG_HOST: kong-database
+  KONG_PG_USER: ${KONG_PG_USER:-kong}
+  KONG_PG_PASSWORD_FILE: /run/secrets/kong_postgres_password
+
+volumes:
+  kong_data: {}
+  kong_prefix_vol:
+    driver_opts:
+     type: tmpfs
+     device: tmpfs
+  kong_tmp_vol:
+    driver_opts:
+     type: tmpfs
+     device: tmpfs
+  prometheus_data:
+  grafana-storage:
+
+networks:
+  kong-net:
+    external: false
+  observe-net:
+    external: false
+
+services:
+  kong-database:
+    image: postgres:9.5
+    container_name: kong-database
+    profiles: ["database"]
+    environment:
+      POSTGRES_DB: ${KONG_PG_DATABASE:-kong}
+      POSTGRES_USER: ${KONG_PG_USER:-kong}
+      POSTGRES_PASSWORD_FILE: /run/secrets/kong_postgres_password
+    secrets:
+      - kong_postgres_password
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${KONG_PG_USER:-kong}"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    stdin_open: true
+    tty: true
+    networks:
+      - kong-net
+    volumes:
+      - kong_data:/var/lib/postgresql/data
+
+  kong-migrations:
+    image: "${KONG_DOCKER_TAG:-kong/kong-gateway:latest}"
+    container_name: kong-migrations
+    command: kong migrations bootstrap
+    profiles: ["database"]
+    depends_on:
+      - kong-database
+    environment:
+      <<: *kong-env
+    secrets:
+      - kong_postgres_password
+    networks:
+      - kong-net
+    restart: on-failure
+
+  kong-migrations-up:
+    image: "${KONG_DOCKER_TAG:-kong/kong-gateway:latest}"
+    container_name: kong-migrations-up
+    command: kong migrations up && kong migrations finish
+    profiles: ["database"]
+    depends_on:
+      - kong-database
+    environment:
+      <<: *kong-env
+    secrets:
+      - kong_postgres_password
+    networks:
+      - kong-net
+    restart: on-failure
+
+  kong:
+    image: "${KONG_DOCKER_TAG:-kong/kong-gateway:latest}"
+    user: "${KONG_USER:-kong}"
+    container_name: kong-gateway
+    environment:
+      <<: *kong-env
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PROXY_LISTEN: "${KONG_PROXY_LISTEN:-0.0.0.0:8000}"
+      KONG_ADMIN_LISTEN: "${KONG_ADMIN_LISTEN:-0.0.0.0:8001}"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_PREFIX: ${KONG_PREFIX:-/var/run/kong}
+      KONG_DECLARATIVE_CONFIG: "/opt/kong/kong.yaml"
+      KONG_ADMIN_GUI_URL: "http://localhost:8002"
+      KONG_ADMIN_GUI_PATH: "/admin"
+    secrets:
+      - kong_postgres_password
+    networks:
+      - kong-net
+    ports:
+      # The following two environment variables default to an insecure value (0.0.0.0)
+      # according to the CIS Security test.
+      - "${KONG_INBOUND_PROXY_LISTEN:-0.0.0.0}:8000:8000/tcp"
+      - "${KONG_INBOUND_SSL_PROXY_LISTEN:-0.0.0.0}:8443:8443/tcp"
+      # Making them mandatory but undefined, like so would be backwards-breaking:
+      # - "${KONG_INBOUND_PROXY_LISTEN?Missing inbound proxy host}:8000:8000/tcp"
+      # - "${KONG_INBOUND_SSL_PROXY_LISTEN?Missing inbound proxy ssl host}:8443:8443/tcp"
+      # Alternative is deactivating check 5.13 in the security bench, if we consider Kong's own config to be enough security here
+
+      - "127.0.0.1:8001:8001/tcp"
+      - "127.0.0.1:8002:8002/tcp"
+      - "127.0.0.1:8444:8444/tcp"
+      - "127.0.0.1:8445:8445/tcp"
+#    deploy:
+#      mode: replicated
+#      replicas: 2
+#      endpoint_mode: vip
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: on-failure:5
+    read_only: true
+    depends_on:
+      - kong-database
+    volumes:
+      - kong_prefix_vol:${KONG_PREFIX:-/var/run/kong}
+      - kong_tmp_vol:/tmp
+      - ./kong/config:/opt/kong
+    security_opt:
+      - no-new-privileges
+
+  client:
+    image: docker69/react-vr-client
+    container_name: client
+    build: 
+      context: ./static
+#    ports:
+#      - "3000:3000"
+    networks: 
+      - kong-net
+    depends_on:
+      - kong
+
+  go-vr-auth:
+    image: docker69/go-vr-auth
+    container_name: go-vr-auth
+    build:
+      context: ./server
+#      dockerfile: ./server/Dockerfile
+    expose:
+      - "8080"
+    networks: 
+      - kong-net
+    depends_on:
+      - kong
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+#    ports:
+#      - 9090:9090
+#    expose:
+#      - "9090"
+    networks: 
+      - kong-net
+      - observe-net
+    depends_on:
+      - go-vr-auth
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "8080:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    networks: 
+      - observe-net
+    depends_on:
+      - prometheus
+
+secrets:
+  kong_postgres_password:
+    file: ./kong/POSTGRES_PASSWORD

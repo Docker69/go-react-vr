@@ -27,7 +27,7 @@ const LoggedIn = () => {
         const token = await getTokenSilently();
         // Send a GET request to the server and add the signed in user's
         // access token in the Authorization header
-        const response = await fetch("http://localhost:8080/products", {
+        const response = await fetch("http://localhost:8000/products", {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -50,7 +50,7 @@ const LoggedIn = () => {
       // Send a POST request to the Go server for the selected product
       // with the vote type
       const response = await fetch(
-        `http://localhost:8080/products/${slug}/feedback`,
+        `http://localhost:8000/products/${slug}/feedback`,
         {
           method: "POST",
           headers: {

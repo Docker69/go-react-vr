@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f docker-compose-dbless.yml -o ./ks8
+    kompose.version: 1.27.0 (b0ed6a2c9)
+  creationTimestamp: null
+  labels:
+    io.kompose.network/kong-net: "true"
+    io.kompose.service: kong
+  name: kong
+spec:
+  containers:
+    - env:
+        - name: KONG_ADMIN_ACCESS_LOG
+          value: /dev/stdout
+        - name: KONG_ADMIN_ERROR_LOG
+          value: /dev/stderr
+        - name: KONG_ADMIN_GUI_PATH
+          value: /admin
+        - name: KONG_ADMIN_GUI_URL
+          value: http://localhost:8002
+        - name: KONG_ADMIN_LISTEN
+          value: 0.0.0.0:8001
+        - name: KONG_DATABASE
+          value: "off"
+        - name: KONG_DECLARATIVE_CONFIG
+          value: /opt/kong/kong.yaml
+        - name: KONG_PREFIX
+          value: /var/run/kong
+        - name: KONG_PROXY_ACCESS_LOG
+          value: /dev/stdout
+        - name: KONG_PROXY_ERROR_LOG
+          value: /dev/stderr
+        - name: KONG_PROXY_LISTEN
+          value: 0.0.0.0:8000
+      image: kong/kong-gateway:latest
+      livenessProbe:
+        exec:
+          command:
+            - kong
+            - health
+        failureThreshold: 10
+        periodSeconds: 10
+        timeoutSeconds: 10
+      name: kong-gateway
+      ports:
+        - containerPort: 8000
+        - containerPort: 8443
+        - containerPort: 8001
+        - containerPort: 8002
+        - containerPort: 8444
+        - containerPort: 8445
+      resources: {}
+      volumeMounts:
+        - mountPath: /var/run/kong
+          name: kong-prefix-vol
+        - mountPath: /tmp
+          name: kong-tmp-vol
+        - mountPath: /opt/kong
+          name: kong-claim2
+  restartPolicy: OnFailure
+  volumes:
+    - name: kong-prefix-vol
+      persistentVolumeClaim:
+        claimName: kong-prefix-vol
+    - name: kong-tmp-vol
+      persistentVolumeClaim:
+        claimName: kong-tmp-vol
+    - name: kong-claim2
+      persistentVolumeClaim:
+        claimName: kong-claim2
+status: {}

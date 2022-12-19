@@ -1,0 +1,19 @@
+echo "KONG_ADMIN_GUI_PATH=/manager \
+ KONG_ADMIN_GUI_URL=http://localhost:8002/manager \
+ kong reload exit" | docker exec -i 1e3902238bae6e4f0ce9db042a8847c322b7390da543b2fe95d17e59bfef5fb6 /bin/sh
+
+echo "KONG_PORTAL_GUI_HOST=localhost:8003 KONG_PORTAL=on kong reload exit" \
+ | docker exec -i 1e3902238bae6e4f0ce9db042a8847c322b7390da543b2fe95d17e59bfef5fb6 /bin/sh
+
+docker kill kong-gateway
+docker kill kong-database
+docker container rm kong-gateway
+docker container rm kong-database
+docker network rm kong-net
+
+#dump configuration
+
+docker run -i -v $(pwd):/deck --name=kong-deck --network=go-react-vr_kong-net kong/deck --kong-addr http://kong-gateway:8001 -o /deck/config/kong.yaml dump
+
+#load configuration
+docker run -i -v $(pwd):/deck --name=kong-deck --network=go-react-vr_kong-net kong/deck --kong-addr http://kong-gateway:8001 -s /deck/config/kong.yaml sync

@@ -1,0 +1,53 @@
+FROM golang:alpine AS builder
+
+# Set necessary environmet variables needed for our image
+ENV GO111MODULE=auto \
+    CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64
+
+# Move to working directory /build
+WORKDIR /build
+# Copy the code into the container
+#COPY ./go.mod ./go.sum ./
+#COPY ./ ./server
+#COPY ../util ./util
+COPY ./ ./
+
+# Copy and download dependency using go mod
+RUN go mod download
+
+# Build the application
+RUN go build -ldflags '-w -s' -a -o ./go-vr-auth ./
+
+# Move to /dist directory as the place for resulting binary folder
+#WORKDIR /dist
+
+# Copy binary from build to main folder
+#RUN cp /build/server/todoserver ./todoserver
+
+# Export necessary port
+#EXPOSE 8080
+
+# Command to run when starting the container
+#CMD ["/dist/main"]
+
+# Build a small image
+#FROM scratch
+FROM alpine
+
+# Move to configuration directory
+#WORKDIR /configuration
+#COPY ./server/configuration/.env .
+
+# Move to / directory
+WORKDIR /
+
+COPY --from=builder /build/go-vr-auth /
+
+# Export necessary port
+EXPOSE 8080
+
+# Command to run
+#CMD ["sleep", "infinity"]
+ENTRYPOINT ["/go-vr-auth"]
